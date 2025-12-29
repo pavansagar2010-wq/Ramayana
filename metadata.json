@@ -1,0 +1,7 @@
+{
+  "name": "Ramayana Comic Universe",
+  "description": "A comprehensive digital platform for a 20-book AI-powered retelling of the sacred Ramayana for children.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
