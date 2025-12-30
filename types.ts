@@ -21,7 +21,7 @@ export interface BookPage {
   isPainting?: boolean;
 }
 
-export interface SeriesBible {
+export interface SeriesLore {
   characters: { name: string; description: string; visuals: string }[];
   locations: { name: string; description: string }[];
   props: { name: string; description: string }[];
@@ -30,5 +30,5 @@ export interface SeriesBible {
 export enum AppView {
   LIBRARY = 'LIBRARY',
   READER = 'READER',
-  BIBLE = 'BIBLE'
+  LORE = 'LORE'
 }

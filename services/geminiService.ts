@@ -1,6 +1,6 @@
 
 import { GoogleGenAI, Type } from "@google/genai";
-import { Book, SeriesBible, BookPage } from "../types";
+import { Book, SeriesLore, BookPage } from "../types";
 import { MASTER_PROMPT_CONSTRAINTS } from "../constants";
 
 export class GeminiService {
@@ -10,10 +10,10 @@ export class GeminiService {
     this.ai = new GoogleGenAI({ apiKey: process.env.API_KEY || "" });
   }
 
-  async generateSeriesBible(): Promise<SeriesBible> {
+  async generateSeriesLore(): Promise<SeriesLore> {
     const response = await this.ai.models.generateContent({
       model: "gemini-3-flash-preview",
-      contents: "Generate a comprehensive Series Bible for a 20-book Ramayana comic series for kids. Include character sheets for Rama, Sita, Lakshmana, Hanuman, and Ravana, a location bible for Ayodhya and Lanka, and a props bible for celestial weapons.",
+      contents: "Generate a comprehensive Series Lore and Reference Guide for a 20-book Ramayana comic series for kids. Include character sheets for Rama, Sita, Lakshmana, Hanuman, and Ravana, a location guide for Ayodhya and Lanka, and a props repository for celestial weapons.",
       config: {
         responseMimeType: "application/json",
         responseSchema: {
@@ -95,9 +95,22 @@ export class GeminiService {
   }
 
   async paintCover(book: Book): Promise<string> {
-    const prompt = `A classic Indian comic book cover art for the Ramayana. Book Title: "${book.title}". 
-    Scene: ${book.summary}. 
-    Style: Hand-drawn lines, warm earthy palette (saffron, indigo, forest green), detailed jewelry, cinematic lighting, traditional architecture. No text, no 3D, no neon. High quality illustration.`;
+    // Transform title to uppercase to ensure casing consistency across all books
+    const displayTitle = book.title.toUpperCase();
+    
+    // Standardized Prompt for Unified Style and Strict Typography
+    const prompt = `A professional, high-end classical Indian comic book cover.
+    MANDATORY TYPOGRAPHY: 
+    - The text "${displayTitle}" must be rendered at the VERY TOP CENTER.
+    - FONT: Use a LARGE, BOLD, HEAVY-WEIGHT, ALL-CAPS, CLASSICAL SERIF COMIC-BOOK FONT.
+    - TEXT STYLE: The font size, weight, and style must be exactly consistent with a 20-volume series.
+    - TEXT COLOR: White or Pale Cream with a thin black or gold outline for high readability.
+    
+    ART STYLE: "Amar Chitra Katha" hand-painted aesthetic. Warm, divine palette (Saffron, Gold, Royal Indigo, Deep Forest Green).
+    TECHNIQUE: Thick ink outlines, detailed traditional clothing and jewelry, traditional Indian architecture.
+    SCENE: ${book.summary}.
+    VIBE: Heroic, epic, and divine.
+    NO OTHER TEXT: Only the title "${displayTitle}" should be visible.`;
 
     const response = await this.ai.models.generateContent({
       model: 'gemini-2.5-flash-image',
@@ -121,9 +134,9 @@ export class GeminiService {
   }
 
   async generatePageImage(page: BookPage, bookTitle: string): Promise<string> {
-    const prompt = `Classic Indian comic panel art for "${bookTitle}". Page ${page.pageNumber}: ${page.title}.
+    const prompt = `Inside panel for Indian comic "${bookTitle}". Page ${page.pageNumber}: ${page.title}.
     Scene: ${page.imageDescription}.
-    Style: Traditional Indian comic art, detailed outfits, warm tones, cinematic lighting, non-childish, respectful. High clarity.`;
+    Style: Traditional Indian comic art, consistent with Amar Chitra Katha, detailed outfits, warm tones, cinematic lighting. Respectful and epic. English comic aesthetic.`;
 
     const response = await this.ai.models.generateContent({
       model: 'gemini-2.5-flash-image',

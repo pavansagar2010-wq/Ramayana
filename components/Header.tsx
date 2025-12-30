@@ -37,10 +37,10 @@ const Header: React.FC<HeaderProps> = ({ currentView, setView, onExportAll }) =>
             Library
           </button>
           <button 
-            onClick={() => setView(AppView.BIBLE)}
-            className={`text-sm uppercase tracking-wider font-bold ${currentView === AppView.BIBLE ? 'text-[#BF360C]' : 'text-[#5D4037] hover:text-[#BF360C]'}`}
+            onClick={() => setView(AppView.LORE)}
+            className={`text-sm uppercase tracking-wider font-bold ${currentView === AppView.LORE ? 'text-[#BF360C]' : 'text-[#5D4037] hover:text-[#BF360C]'}`}
           >
-            Universe Bible
+            Universe Lore
           </button>
           <button 
             onClick={onExportAll}

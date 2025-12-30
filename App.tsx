@@ -1,25 +1,54 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { RAMAYANA_BOOKS } from './constants';
-import { Book, AppView, SeriesBible, BookPage } from './types';
+import { Book, AppView, SeriesLore, BookPage } from './types';
 import { GeminiService } from './services/geminiService';
+import { StorageService } from './services/storageService';
 import Header from './components/Header';
 import BookCard from './components/BookCard';
 import BookReader from './components/BookReader';
-import BibleView from './components/BibleView';
+import LoreView from './components/LoreView';
 
 const App: React.FC = () => {
   const [view, setView] = useState<AppView>(AppView.LIBRARY);
   const [books, setBooks] = useState<Book[]>(RAMAYANA_BOOKS);
   const [selectedBook, setSelectedBook] = useState<Book | null>(null);
-  const [bible, setBible] = useState<SeriesBible | null>(null);
+  const [lore, setLore] = useState<SeriesLore | null>(null);
   const [currentPages, setCurrentPages] = useState<BookPage[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
+  const [isBulkPainting, setIsBulkPainting] = useState<boolean>(false);
+  const [bulkProgress, setBulkProgress] = useState<string>("");
   const [gemini, setGemini] = useState<GeminiService | null>(null);
+
+  // Status statistics for each book
+  const [syncedCounts, setSyncedCounts] = useState<Record<number, { cover: boolean, pages: number }>>({});
 
   useEffect(() => {
     setGemini(new GeminiService());
+    refreshUniverseStats();
   }, []);
+
+  const refreshUniverseStats = async () => {
+    const stats: Record<number, { cover: boolean, pages: number }> = {};
+    const updatedBooks = await Promise.all(RAMAYANA_BOOKS.map(async (book) => {
+      const cover = await StorageService.getCoverFromCloud(book.id);
+      const script = await StorageService.getBookScriptFromCloud(book.id);
+      let pagesCount = 0;
+      if (script) {
+        for (const p of script) {
+          const img = await StorageService.getPageFromCloud(book.id, p.pageNumber);
+          if (img) pagesCount++;
+        }
+      }
+      stats[book.id] = { cover: !!cover, pages: pagesCount };
+      return cover ? { ...book, coverImage: cover } : book;
+    }));
+    setBooks(updatedBooks);
+    setSyncedCounts(stats);
+    
+    const savedLore = await StorageService.getLoreFromCloud();
+    if (savedLore) setLore(savedLore);
+  };
 
   const handleOpenBook = useCallback(async (book: Book) => {
     if (!gemini) return;
@@ -28,158 +57,278 @@ const App: React.FC = () => {
     setView(AppView.READER);
     
     try {
-      // Generate scripts
-      const pages = await gemini.generateBookPages(book);
-      setCurrentPages(pages);
-      
-      // Automatically paint the first page image
-      if (pages.length > 0 && !pages[0].imageUrl) {
-        handlePaintPage(pages[0].pageNumber, book.title, pages);
+      let pages = await StorageService.getBookScriptFromCloud(book.id);
+      if (!pages) {
+        pages = await gemini.generateBookPages(book);
+        await StorageService.syncBookScriptToCloud(book.id, pages);
       }
+      
+      const pagesWithPersistence = await Promise.all(pages.map(async (p: BookPage) => {
+        const saved = await StorageService.getPageFromCloud(book.id, p.pageNumber);
+        return saved ? { ...p, imageUrl: saved } : p;
+      }));
+
+      setCurrentPages(pagesWithPersistence);
     } catch (error) {
-      console.error("Error opening book:", error);
-      alert("The divine scrolls are currently inaccessible. Please try again.");
+      console.error("Open Book Error:", error);
+      alert("Divine connection interrupted. Please try again.");
     } finally {
       setLoading(false);
     }
   }, [gemini]);
 
-  const handlePaintPage = useCallback(async (pageNumber: number, bookTitle: string, currentPagesOverride?: BookPage[]) => {
-    if (!gemini) return;
+  const handlePaintPage = useCallback(async (pageNumber: number, bookTitle: string) => {
+    if (!gemini || !selectedBook) return;
 
-    const pagesToUpdate = currentPagesOverride || currentPages;
-    const targetPage = pagesToUpdate.find(p => p.pageNumber === pageNumber);
-    if (!targetPage) return;
-
-    // Set painting status
-    setCurrentPages(prev => prev.map(p => p.pageNumber === pageNumber ? { ...p, isPainting: true } : p));
+    setCurrentPages(prev => prev.map(p => Number(p.pageNumber) === Number(pageNumber) ? { ...p, isPainting: true } : p));
 
     try {
+      const targetPage = currentPages.find(p => Number(p.p.pageNumber) === Number(pageNumber)) || 
+                          (await StorageService.getBookScriptFromCloud(selectedBook.id))?.find(p => Number(p.pageNumber) === Number(pageNumber));
+      
+      if (!targetPage) throw new Error("Page content missing");
+
       const imageUrl = await gemini.generatePageImage(targetPage, bookTitle);
-      setCurrentPages(prev => prev.map(p => p.pageNumber === pageNumber ? { ...p, imageUrl, isPainting: false } : p));
+      await StorageService.syncPageToCloud(selectedBook.id, pageNumber, imageUrl);
+      
+      setCurrentPages(prev => prev.map(p => Number(p.pageNumber) === Number(pageNumber) ? { ...p, imageUrl, isPainting: false } : p));
+      refreshUniverseStats();
     } catch (error) {
-      console.error("Error painting page image:", error);
-      setCurrentPages(prev => prev.map(p => p.pageNumber === pageNumber ? { ...p, isPainting: false } : p));
+      console.error("Paint Page Error:", error);
+      setCurrentPages(prev => prev.map(p => Number(p.pageNumber) === Number(pageNumber) ? { ...p, isPainting: false } : p));
     }
-  }, [gemini, currentPages]);
+  }, [gemini, currentPages, selectedBook]);
 
   const handlePaintCover = useCallback(async (book: Book) => {
     if (!gemini) return;
-    
     setBooks(prev => prev.map(b => b.id === book.id ? { ...b, isGenerating: true } : b));
     
     try {
       const coverUrl = await gemini.paintCover(book);
+      await StorageService.syncCoverToCloud(book.id, coverUrl);
       setBooks(prev => prev.map(b => b.id === book.id ? { ...b, coverImage: coverUrl, isGenerating: false } : b));
+      refreshUniverseStats();
     } catch (error) {
-      console.error("Error painting cover:", error);
+      console.error("Paint Cover Error:", error);
       setBooks(prev => prev.map(b => b.id === book.id ? { ...b, isGenerating: false } : b));
-      alert("The celestial brushes are dry. Please try again.");
     }
   }, [gemini]);
 
-  const handleGenerateBible = useCallback(async () => {
+  const handlePaintAllUniverse = async () => {
+    if (!gemini || isBulkPainting) return;
+    if (!confirm("Start Automated Illumination? This will systematically check all 20 volumes and generate ONLY what is missing. This ensures absolute persistence and saves your credits.")) return;
+
+    setIsBulkPainting(true);
+    try {
+      for (const book of RAMAYANA_BOOKS) {
+        // 1. Cover
+        const existingCover = await StorageService.getCoverFromCloud(book.id);
+        if (!existingCover) {
+          setBulkProgress(`[Vol ${book.id}] Painting Sacred Cover...`);
+          const coverUrl = await gemini.paintCover(book);
+          await StorageService.syncCoverToCloud(book.id, coverUrl);
+        }
+
+        // 2. Script
+        let pages = await StorageService.getBookScriptFromCloud(book.id);
+        if (!pages) {
+          setBulkProgress(`[Vol ${book.id}] Scribing Narrative...`);
+          pages = await gemini.generateBookPages(book);
+          await StorageService.syncBookScriptToCloud(book.id, pages);
+        }
+        
+        // 3. Page Images
+        for (let j = 0; j < pages.length; j++) {
+          const page = pages[j];
+          const existingImage = await StorageService.getPageFromCloud(book.id, page.pageNumber);
+          if (!existingImage) {
+            setBulkProgress(`[Vol ${book.id}] Painting Page ${page.pageNumber}/${pages.length}...`);
+            const imageUrl = await gemini.generatePageImage(page, book.title);
+            await StorageService.syncPageToCloud(book.id, page.pageNumber, imageUrl);
+          }
+        }
+        await refreshUniverseStats();
+      }
+      alert("Divine Illumination Complete! All volumes are secured in persistent storage.");
+    } catch (e) {
+      console.error("Massive Generation Error:", e);
+      alert("A temporary disruption occurred. Progress has been saved.");
+    } finally {
+      setIsBulkPainting(false);
+      setBulkProgress("");
+    }
+  };
+
+  const generateExportHtml = (title: string, content: string) => {
+    const html = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="UTF-8">
+        <title>${title}</title>
+        <style>
+          @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700&family=Lora&display=swap');
+          body { font-family: 'Lora', serif; background: #FDFBF7; padding: 40px; color: #3E2723; }
+          .container { max-width: 900px; margin: 0 auto; }
+          .header { text-align: center; border-bottom: 5px double #BF360C; padding-bottom: 30px; margin-bottom: 60px; }
+          .title { font-family: 'Playfair Display', serif; font-size: 4rem; color: #BF360C; text-transform: uppercase; margin: 10px 0; }
+          .card { background: white; border: 1px solid #D7C9B1; border-radius: 12px; margin-bottom: 60px; overflow: hidden; box-shadow: 0 10px 30px rgba(0,0,0,0.05); page-break-inside: avoid; }
+          .img { width: 100%; display: block; border-bottom: 1px solid #D7C9B1; }
+          .inner { padding: 40px; text-align: center; }
+          .num { color: #BF360C; font-weight: bold; font-size: 0.9rem; text-transform: uppercase; letter-spacing: 0.2em; margin-bottom: 15px; }
+          .h { font-family: 'Playfair Display', serif; font-size: 2.2rem; margin-bottom: 20px; }
+          .narr { font-size: 1.2rem; margin-bottom: 25px; color: #5D4037; line-height: 1.8; }
+          .diag { font-family: 'Playfair Display', serif; font-style: italic; font-size: 1.5rem; color: #3E2723; padding: 20px; background: #FDFBF7; border-left: 6px solid #BF360C; display: inline-block; }
+          @media print { .card { box-shadow: none; border: 1px solid #D7C9B1; } }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          ${content}
+        </div>
+      </body>
+      </html>
+    `;
+    const blob = new Blob([html], { type: 'text/html' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${title.replace(/[^a-z0-9]/gi, '_')}.html`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  const handleExportBook = async (book: Book, pages: BookPage[]) => {
+    setLoading(true);
+    let htmlContent = `
+      <div class="header">
+        <div style="font-weight:bold; letter-spacing:0.3em; color:#8D6E63;">Volume ${book.id}</div>
+        <h1 class="title">${book.title}</h1>
+        <p style="font-size:1.1rem; max-width:700px; margin:20px auto;">${book.summary}</p>
+      </div>
+    `;
+
+    for (const p of pages) {
+      const img = await StorageService.getPageFromCloud(book.id, p.pageNumber);
+      htmlContent += `
+        <div class="card">
+          ${img ? `<img class="img" src="${img}" />` : `<div style="padding: 100px; background:#f0f0f0; text-align:center;">Illustration Awaiting Generation</div>`}
+          <div class="inner">
+            <div class="num">Chronicle Page ${p.pageNumber}</div>
+            <div class="h">${p.title}</div>
+            <div class="narr">${p.narration}</div>
+            ${p.dialogue ? `<div class="diag">"${p.dialogue}"</div>` : ''}
+          </div>
+        </div>
+      `;
+    }
+    setLoading(false);
+    generateExportHtml(`Ramayana_Vol_${book.id}_${book.title}`, htmlContent);
+  };
+
+  const handleExportAll = async () => {
+    if (!confirm("Export Complete Master Anthology? This will include all 20 volumes currently saved in your persistent cloud storage.")) return;
+    setLoading(true);
+    let masterContent = `<h1 style="text-align:center; font-family:'Playfair Display', serif; font-size:5rem; color:#BF360C; margin-top:200px;">RAMAYANA: THE COMPLETE CHRONICLES</h1>`;
+    
+    for (const book of RAMAYANA_BOOKS) {
+      const pages = await StorageService.getBookScriptFromCloud(book.id);
+      if (pages) {
+        masterContent += `
+          <div style="page-break-before: always; margin-top: 150px;">
+            <div class="header">
+              <div style="font-weight:bold; letter-spacing:0.3em; color:#8D6E63;">Volume ${book.id}</div>
+              <h1 class="title">${book.title}</h1>
+            </div>
+        `;
+        for (const p of pages) {
+          const img = await StorageService.getPageFromCloud(book.id, p.pageNumber);
+          masterContent += `
+            <div class="card">
+              ${img ? `<img class="img" src="${img}" />` : `<div style="padding: 80px; background:#f5f5f5; text-align:center;">Illustration Pending</div>`}
+              <div class="inner">
+                <div class="num">Vol ${book.id} - Page ${p.pageNumber}</div>
+                <div class="h">${p.title}</div>
+                <div class="narr">${p.narration}</div>
+              </div>
+            </div>
+          `;
+        }
+        masterContent += `</div>`;
+      }
+    }
+    setLoading(false);
+    generateExportHtml("Ramayana_Master_Anthology_20_Volumes", masterContent);
+  };
+
+  const handleGenerateLore = useCallback(async () => {
     if (!gemini) return;
     setLoading(true);
     try {
-      const res = await gemini.generateSeriesBible();
-      setBible(res);
-    } catch (error) {
-      console.error("Error generating bible:", error);
-      alert("Could not meditate on the sacred knowledge.");
-    } finally {
-      setLoading(false);
-    }
+      const res = await gemini.generateSeriesLore();
+      await StorageService.syncLoreToCloud(res);
+      setLore(res);
+    } catch (error) { console.error(error); } finally { setLoading(false); }
   }, [gemini]);
 
-  const handleExportAll = () => {
-    alert("This feature would generate a 480-page high-resolution PDF spanning all 20 volumes of the Ramayana. For this demo, we've prepared the architectural structure for export.");
+  const handleResetUniverse = async () => {
+    if (confirm("PERMANENTLY WIPE ALL PERSISTENT DATA? This cannot be undone.")) {
+      await StorageService.clearUniverse();
+      window.location.reload();
+    }
   };
 
   return (
     <div className="min-h-screen flex flex-col">
       <Header currentView={view} setView={setView} onExportAll={handleExportAll} />
-      
       <main className="flex-1 bg-[#FDFBF7]">
         {view === AppView.LIBRARY && (
           <div className="max-w-7xl mx-auto px-4 py-12">
-            <header className="text-center mb-16 px-4">
-              <span className="text-[10px] text-[#BF360C] uppercase tracking-[0.5em] font-bold block mb-4">The Divine Anthology</span>
-              <h1 className="text-4xl md:text-7xl font-serif-display text-[#3E2723] uppercase tracking-tighter mb-6">
-                Twenty Sacred Scrolls
-              </h1>
-              <p className="max-w-2xl mx-auto text-[#8D6E63] text-lg leading-relaxed mb-10">
-                The timeless life of Lord Rama retold across 20 volumes. A single click exports the entire sacred collection as a comprehensive PDF.
-              </p>
-              
+            <header className="text-center mb-16">
+              <span className="text-[10px] text-[#BF360C] uppercase tracking-[0.5em] font-bold block mb-4">A Legacy Restored</span>
+              <h1 className="text-4xl md:text-7xl font-serif-display text-[#3E2723] uppercase tracking-tighter mb-6">The Twenty Scrolls</h1>
+              <p className="max-w-2xl mx-auto text-[#8D6E63] text-lg mb-10">Synced to Persistent High-Capacity Browser Storage.</p>
               <button 
-                onClick={handleExportAll}
-                className="bg-[#5D4037] hover:bg-black text-white px-10 py-5 rounded-full text-sm font-bold uppercase tracking-[0.2em] shadow-2xl transition-all flex items-center gap-3 mx-auto"
+                onClick={handlePaintAllUniverse} 
+                disabled={isBulkPainting} 
+                className={`bg-[#BF360C] text-white px-10 py-5 rounded-full text-xs font-bold uppercase tracking-[0.2em] shadow-2xl transition-all ${isBulkPainting ? 'opacity-50' : 'hover:bg-black hover:-translate-y-1'}`}
               >
-                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                </svg>
-                Export All 20 Books (Complete PDF)
+                {isBulkPainting ? 'Illuminating Scrolls...' : 'Illuminate Complete 20-Book Universe'}
               </button>
+              {isBulkPainting && <p className="mt-4 text-[#BF360C] text-[10px] uppercase font-bold tracking-[0.3em] animate-pulse">{bulkProgress}</p>}
             </header>
-
             <div className="grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-8">
               {books.map((book) => (
                 <BookCard 
                   key={book.id} 
                   book={book} 
-                  onOpen={handleOpenBook}
-                  onPaint={handlePaintCover}
+                  stats={syncedCounts[book.id]}
+                  onOpen={handleOpenBook} 
+                  onPaint={handlePaintCover} 
                 />
               ))}
             </div>
           </div>
         )}
-
         {view === AppView.READER && selectedBook && (
           <BookReader 
             book={selectedBook} 
             pages={currentPages} 
-            isLoading={loading}
-            onBack={() => setView(AppView.LIBRARY)}
-            onPaintPage={(pageNum) => handlePaintPage(pageNum, selectedBook.title)}
-          />
-        )}
-
-        {view === AppView.BIBLE && (
-          <BibleView 
-            bible={bible} 
             isLoading={loading} 
-            onGenerate={handleGenerateBible} 
+            onBack={() => setView(AppView.LIBRARY)} 
+            onPaintPage={(pageNum) => handlePaintPage(pageNum, selectedBook.title)} 
+            onExport={handleExportBook}
           />
         )}
+        {view === AppView.LORE && <LoreView lore={lore} isLoading={loading} onGenerate={handleGenerateLore} />}
       </main>
-
-      <footer className="bg-[#EFEBE9] border-t border-[#D7C9B1] py-12 px-4 text-center">
-        <div className="max-w-2xl mx-auto">
-          <div className="text-[#5D4037] font-serif-display text-2xl uppercase tracking-[0.2em] mb-4">
-            Ramayana Universe
-          </div>
-          <p className="text-[#8D6E63] text-sm leading-relaxed mb-6">
-            A digital tribute to the epic that defines Dharma. Created with respect and technological marvel to inspire the next generation.
-          </p>
-          <div className="flex justify-center gap-8 mb-8">
-             <div className="text-center">
-               <span className="block text-2xl font-serif-display text-[#BF360C]">20</span>
-               <span className="text-[10px] uppercase tracking-widest text-[#8D6E63] font-bold">Volumes</span>
-             </div>
-             <div className="text-center">
-               <span className="block text-2xl font-serif-display text-[#BF360C]">480</span>
-               <span className="text-[10px] uppercase tracking-widest text-[#8D6E63] font-bold">Total Pages</span>
-             </div>
-             <div className="text-center">
-               <span className="block text-2xl font-serif-display text-[#BF360C]">AI</span>
-               <span className="text-[10px] uppercase tracking-widest text-[#8D6E63] font-bold">Powered</span>
-             </div>
-          </div>
-          <p className="text-[#A1887F] text-[10px] uppercase tracking-[0.4em]">
-            © 2024 Ramayana Comic Universe AI • All Rights Reserved
-          </p>
+      <footer className="bg-[#EFEBE9] border-t border-[#D7C9B1] py-16 text-center">
+        <div className="max-w-2xl mx-auto px-4">
+          <div className="text-[#5D4037] font-serif-display text-2xl uppercase tracking-[0.2em] mb-4">Ramayana Universe</div>
+          <p className="text-[#8D6E63] text-sm mb-8">This app uses IndexedDB persistence to ensure your images are never lost on refresh. Export to HTML for offline archiving.</p>
+          <button onClick={handleResetUniverse} className="text-[10px] text-[#8D6E63] hover:text-[#BF360C] uppercase tracking-[0.3em] font-bold border border-[#D7C9B1] px-6 py-2 rounded-full">Clear Local Persistence</button>
         </div>
       </footer>
     </div>

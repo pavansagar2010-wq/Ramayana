@@ -8,50 +8,69 @@ interface BookReaderProps {
   onBack: () => void;
   isLoading: boolean;
   onPaintPage: (pageNumber: number) => void;
+  onExport: (book: Book, pages: BookPage[]) => void;
 }
 
-const BookReader: React.FC<BookReaderProps> = ({ book, pages, onBack, isLoading, onPaintPage }) => {
+const BookReader: React.FC<BookReaderProps> = ({ book, pages, onBack, isLoading, onPaintPage, onExport }) => {
   if (isLoading) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-[#FDFBF7] p-8">
         <div className="w-16 h-16 border-4 border-[#BF360C]/20 border-t-[#BF360C] rounded-full animate-spin mb-6"></div>
         <h2 className="text-2xl font-serif-display text-[#5D4037] animate-pulse">Scribing Book {book.id}...</h2>
-        <p className="text-[#8D6E63] text-sm mt-2 italic">The sages are drafting the divine scrolls.</p>
+        <p className="text-[#8D6E63] text-sm mt-2 italic">Retrieving divine scriptures and illumination.</p>
       </div>
     );
   }
 
   return (
     <div className="min-h-screen bg-[#FDFBF7] pb-20">
-      <div className="bg-[#5D4037] text-white py-8 px-4 text-center sticky top-0 z-40">
-        <div className="max-w-4xl mx-auto flex items-center justify-between">
-          <button onClick={onBack} className="text-[#F5F1E9] hover:text-white flex items-center gap-2 uppercase text-[10px] font-bold tracking-widest">
+      <div className="bg-[#5D4037] text-white py-8 px-4 text-center sticky top-0 z-40 shadow-xl">
+        <div className="max-w-7xl mx-auto flex items-center justify-between">
+          <button onClick={onBack} className="text-[#F5F1E9] hover:text-white flex items-center gap-2 uppercase text-[10px] font-bold tracking-widest transition-colors">
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 19l-7-7m0 0l7-7m-7 7h18" />
             </svg>
-            Back to Library
+            Library
           </button>
           <div className="flex-1 px-4">
             <h2 className="text-xl md:text-3xl font-serif-display uppercase tracking-widest">{book.title}</h2>
-            <p className="text-[10px] uppercase tracking-[0.3em] text-[#D7C9B1] mt-1">Book {book.id} of 20</p>
+            <div className="flex items-center justify-center gap-2 mt-1">
+              <span className="h-[1px] w-4 bg-[#D7C9B1]/50"></span>
+              <p className="text-[10px] uppercase tracking-[0.3em] text-[#D7C9B1] font-bold">Volume {book.id} of 20</p>
+              <span className="h-[1px] w-4 bg-[#D7C9B1]/50"></span>
+            </div>
           </div>
-          <div className="w-24"></div>
+          <button 
+            onClick={() => onExport(book, pages)}
+            className="bg-[#BF360C] hover:bg-black text-white px-4 py-2 rounded-full text-[10px] font-bold uppercase tracking-widest flex items-center gap-2 transition-all shadow-lg"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+            </svg>
+            Export Book
+          </button>
         </div>
       </div>
 
       <div className="max-w-5xl mx-auto p-4 space-y-12 mt-8">
         {pages.map((page) => (
-          <div key={page.pageNumber} className="bg-white border border-[#D7C9B1] shadow-2xl rounded-sm overflow-hidden flex flex-col">
-            {/* Header info */}
+          <div key={`${book.id}_${page.pageNumber}`} className="bg-white border border-[#D7C9B1] shadow-2xl rounded-sm overflow-hidden flex flex-col">
             <div className="bg-[#F5F1E9] border-b border-[#D7C9B1] px-6 py-2 flex justify-between items-center text-[10px] text-[#8D6E63] font-bold uppercase tracking-widest">
               <span>{book.title}</span>
-              <span>Page {page.pageNumber}</span>
+              <span className="text-[#BF360C]">Chronicle Page {page.pageNumber}</span>
             </div>
             
-            {/* 70% Image Area */}
             <div className="aspect-video bg-[#EFEBE9] relative overflow-hidden flex-1 min-h-[400px]">
               {page.imageUrl ? (
-                 <img src={page.imageUrl} alt={page.title} className="w-full h-full object-cover" />
+                <>
+                  <img src={page.imageUrl} alt={page.title} className="w-full h-full object-cover" />
+                  <div className="absolute top-4 right-4 bg-white/90 backdrop-blur-sm px-2 py-1 rounded-full shadow-lg flex items-center gap-1.5">
+                    <svg className="w-3 h-3 text-green-600" fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                    </svg>
+                    <span className="text-[9px] font-bold text-green-800 uppercase tracking-tighter">Saved to Cloud</span>
+                  </div>
+                </>
               ) : (
                 <div className="absolute inset-0 flex flex-col items-center justify-center p-12 text-center">
                   {page.isPainting ? (
@@ -78,14 +97,8 @@ const BookReader: React.FC<BookReaderProps> = ({ book, pages, onBack, isLoading,
                   )}
                 </div>
               )}
-              
-              {/* Overlay Label for Artwork */}
-              <div className="absolute top-4 left-4 bg-black/60 backdrop-blur-sm text-white px-3 py-1 rounded-sm text-[9px] uppercase tracking-widest font-bold">
-                Visual Projection
-              </div>
             </div>
 
-            {/* 30% Text Area */}
             <div className="p-8 md:p-12 bg-[#FDFBF7] flex flex-col items-center text-center">
               <h3 className="text-[#BF360C] font-serif-display text-xl mb-6 italic underline decoration-[#D7C9B1] underline-offset-8">
                 {page.title}
@@ -110,11 +123,6 @@ const BookReader: React.FC<BookReaderProps> = ({ book, pages, onBack, isLoading,
                   </div>
                 )}
               </div>
-            </div>
-            
-            {/* Footer */}
-            <div className="bg-[#F5F1E9] px-6 py-2 border-t border-[#D7C9B1] text-center">
-               <span className="text-[9px] text-[#8D6E63] uppercase tracking-[0.3em]">Generated by Ramayana Comic Universe AI</span>
             </div>
           </div>
         ))}
